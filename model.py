@@ -97,6 +97,7 @@ class SiameseNetworkForSimilarity(nn.Module):
         features1 = self.encoder(x1)  # (N, 4096)
         features2 = self.encoder(x2)  # (N, 4096)
         predictions = self.predictor(features1, features2)  # (N, 1)
+        predictions = predictions.squeeze(dim=1)  # (N)
         if self.final_sigmoid:
             predictions = torch.sigmoid(predictions)
         return predictions
@@ -115,8 +116,6 @@ class OneShotSimilarityPredictor(pl.LightningModule):
     ) -> dict[str, any]:
         x1, x2, y = batch
         y_hat = self.network(x1, x2)
-        if y_hat.dim() > 1:
-            y_hat = y_hat.squeeze()
         loss = self.criterion(y_hat, y)
         return {"loss": loss}
 
