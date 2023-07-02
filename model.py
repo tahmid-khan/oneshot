@@ -1,6 +1,6 @@
+import lightning as L
 import torch
-from lightning import pytorch as pl
-from torch import nn, optim, Tensor
+from torch import Tensor, nn, optim
 from torch.nn import functional as F
 
 
@@ -103,7 +103,7 @@ class SiameseNetworkForSimilarity(nn.Module):
         return predictions
 
 
-class OneShotSimilarityPredictor(pl.LightningModule):
+class OneShotSimilarityPredictor(L.LightningModule):
     def __init__(self) -> None:
         super().__init__()
         self.network = SiameseNetworkForSimilarity()
@@ -118,6 +118,13 @@ class OneShotSimilarityPredictor(pl.LightningModule):
         y_hat = self.network(x1, x2)
         loss = self.criterion(y_hat, y)
         return {"loss": loss}
+
+    def validation_step(
+        self,
+        batch: tuple[Tensor, Tensor, Tensor],
+        batch_idx: int,
+    ) -> dict[str, any]:
+        return self.training_step(batch, batch_idx)
 
     def configure_optimizers(self) -> optim.Optimizer:
         # starting simple with SGD
