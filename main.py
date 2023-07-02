@@ -24,7 +24,7 @@ def main():
     model = OneShotSimilarityPredictor()
     train_dataloader = create_dataloader(DATASET_ROOT, training=True, batch_size=128)
     val_dataloader = create_dataloader(DATASET_ROOT, training=False, batch_size=128)
-    trainer = pl.Trainer(accelerator="gpu", devices=1, max_epochs=20)
+    trainer = pl.Trainer(max_epochs=20)
     trainer.fit(model, train_dataloader, val_dataloader)
 
 
