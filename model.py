@@ -1,5 +1,6 @@
 import lightning as L
 import torch
+import torchmetrics
 from torch import Tensor, nn, optim
 from torch.nn import functional as F
 
@@ -108,6 +109,8 @@ class OneShotSimilarityPredictor(L.LightningModule):
         super().__init__()
         self.network = SiameseNetworkForSimilarity()
         self.criterion = nn.BCEWithLogitsLoss()
+        self.train_accuracy = torchmetrics.classification.BinaryAccuracy()
+        self.valid_accuracy = torchmetrics.classification.BinaryAccuracy()
 
     def training_step(
         self,
@@ -117,14 +120,22 @@ class OneShotSimilarityPredictor(L.LightningModule):
         x1, x2, y = batch
         y_hat = self.network(x1, x2)
         loss = self.criterion(y_hat, y)
-        return {"loss": loss}
+        metrics = {"loss": loss, "train_acc": self.train_accuracy}
+        self.log_dict(metrics, on_step=True, on_epoch=True)
+        return metrics
 
     def validation_step(
         self,
         batch: tuple[Tensor, Tensor, Tensor],
         batch_idx: int,
     ) -> dict[str, any]:
-        return self.training_step(batch, batch_idx)
+        x1, x2, y = batch
+        y_hat = self.network(x1, x2)
+        loss = self.criterion(y_hat, y)
+        self.valid_accuracy(y_hat, y)
+        metrics = {"valid_loss": loss, "valid_acc": self.valid_accuracy}
+        self.log_dict(metrics, on_step=True, on_epoch=True)
+        return metrics
 
     def configure_optimizers(self) -> optim.Optimizer:
         # starting simple with SGD

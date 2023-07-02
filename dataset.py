@@ -5,7 +5,6 @@ import solt
 import torch
 from PIL import Image
 from solt import transforms as slt
-from torch.utils.data import IterableDataset
 from torchvision.datasets import utils
 from torchvision.transforms import functional
 
@@ -20,11 +19,11 @@ _ZIPS_MD5: dict[str, str] = {
     _IMAGES_EVALUATION: "6b91aef0f799c5bb55b94e3f2daec811",
 }
 _NUM_CHARS_PER_ALPHA: int = 15  # number of characters to take per alphabet
-_SAME_CLASS_TARGET = torch.ones(size=())  # 0-dimensional i.e. just a scalar 1.0
-_DIFF_CLASS_TARGET = torch.zeros(size=())  # 0-dimensional i.e. just a scalar 0.0
+_SAME_CLASS_TARGET = torch.ones(size=())  # just a scalar 1.0, which is 0-dimensional
+_DIFF_CLASS_TARGET = torch.zeros(size=())  # just a scalar 0.0, which is 0-dimensional
 
 
-class OmniglotForVerificationTask(IterableDataset):
+class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
     data: list[list[list[Image]]]
 
     def __init__(
