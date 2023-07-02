@@ -17,7 +17,7 @@ def create_dataloader(root_path: str, training: bool, batch_size: int) -> DataLo
         augment=False,
         download=True,
     )
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 
 def main():
