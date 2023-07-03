@@ -56,30 +56,17 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
         self.augment = augment
         self.zip_name_no_ext = _IMAGES_BACKGROUND if train else _IMAGES_EVALUATION
         self.drawers_slice = slice(12) if train else slice(16)
-        if download:
-            self.download_and_prepare()
-        else:
-            self.prepare_data()
+        self._download_and_verify(download=download)
+        augmentations = [
+            slt.Rotate(p=0.5, angle_range=10.0),  # 𝜃 ∈ [−10.0, 10.0]
+            slt.Shear(p=0.5, range_x=0.3, range_y=0.3),  # 𝜌 ∈ [−0.3, 0.3]
+            slt.Scale(p=0.5, range_x=(0.8, 1.2), range_y=(0.8, 1.2)),  # 𝑠 ∈ [0.8, 1.2]
+            slt.Translate(p=0.5, range_x=2, range_y=2),  # 𝑡 ∈ [−2, 2]
+        ]
+        self.augmentation_pipeline = solt.Stream(augmentations)
+        self._prepare_data()
 
-        self.data_augmentation_pipeline = solt.Stream(
-            [
-                slt.Rotate(p=0.5, angle_range=10.0),  # 𝜃 ∈ [−10.0, 10.0]
-                slt.Shear(p=0.5, range_x=0.3, range_y=0.3),  # 𝜌 ∈ [−0.3, 0.3]
-                slt.Scale(p=0.5, range_x=(0.8, 1.2), range_y=(0.8, 1.2)),  # 𝑠∈[0.8,1.2]
-                slt.Translate(p=0.5, range_x=2, range_y=2),  # 𝑡 ∈ [−2, 2]
-            ]
-        )
-
-    def download_and_prepare(self):
-        self._download()
-        if not self._check_integrity():
-            raise RuntimeError(
-                "Dataset not found or corrupted. You can use download=True to " +
-                "download it."
-            )
-        self.prepare_data()
-
-    def prepare_data(self):
+    def _prepare_data(self) -> None:
         self.data = []
         root = path.join(self.root, self.zip_name_no_ext)
         for alphabet_dir in utils.list_dir(root, prefix=True):
@@ -105,6 +92,18 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
 
             self.data.append(alphabet_data)
 
+    def _download_and_verify(self, download):
+        if download:
+            self._download()
+        if not self._check_integrity():
+            raise RuntimeError(
+                "Dataset not found or corrupted. You can use download=True to "
+                + "download it."
+            )
+
+    def __len__(self) -> int:
+        return self.n_sample_pairs
+
     def __iter__(self) -> Iterator[tuple[Tensor, Tensor, Tensor]]:
         drawers_range = range(20)[self.drawers_slice]
         times_to_augment = 8 if self.augment else 0
@@ -127,18 +126,9 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
                 yield anchor_tensor, self.augment_transform(positive), _SAME_PAIR_TARGET
                 yield anchor_tensor, self.augment_transform(negative), _DIFF_PAIR_TARGET
 
-    def __len__(self) -> int:
-        return self.n_sample_pairs
-
-    def _check_integrity(self) -> bool:
-        return utils.check_integrity(
-            fpath=path.join(self.root, self.zip_name_no_ext + ".zip"),
-            md5=_ZIPS_MD5[self.zip_name_no_ext],
-        )
-
     def _download(self) -> None:
         if self._check_integrity():
-            print("Files already downloaded and verified")
+            print(f"File already downloaded and verified: {self.zip_name_no_ext}.zip")
             return
 
         zip_filename = self.zip_name_no_ext + ".zip"
@@ -150,11 +140,17 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
             md5=_ZIPS_MD5[self.zip_name_no_ext],
         )
 
+    def _check_integrity(self) -> bool:
+        return utils.check_integrity(
+            fpath=path.join(self.root, self.zip_name_no_ext + ".zip"),
+            md5=_ZIPS_MD5[self.zip_name_no_ext],
+        )
+
     def transform(self, image: Image.Image) -> Tensor:
         return functional.to_tensor(image)
 
     def augment_transform(self, image: Image.Image) -> Tensor:
-        return self.data_augmentation_pipeline(
+        return self.augmentation_pipeline(
             solt.DataContainer(image, "I"),
             return_torch=True,
             as_dict=False,
