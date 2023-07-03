@@ -61,12 +61,21 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
         else:
             self.prepare_data()
 
+        self.data_augmentation_pipeline = solt.Stream(
+            [
+                slt.Rotate(p=0.5, angle_range=10.0),  # 𝜃 ∈ [−10.0, 10.0]
+                slt.Shear(p=0.5, range_x=0.3, range_y=0.3),  # 𝜌 ∈ [−0.3, 0.3]
+                slt.Scale(p=0.5, range_x=(0.8, 1.2), range_y=(0.8, 1.2)),  # 𝑠∈[0.8,1.2]
+                slt.Translate(p=0.5, range_x=2, range_y=2),  # 𝑡 ∈ [−2, 2]
+            ]
+        )
+
     def download_and_prepare(self):
         self._download()
         if not self._check_integrity():
             raise RuntimeError(
-                """Dataset not found or corrupted. You can use download=True to
-                download it"""
+                "Dataset not found or corrupted. You can use download=True to " +
+                "download it."
             )
         self.prepare_data()
 
@@ -107,16 +116,16 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
 
             anchor = char1[drawer1]
             positive = char1[drawer2]
-            anchor_tensor = to_tensor(anchor)
-            yield anchor_tensor, to_tensor(positive), _SAME_PAIR_TARGET
+            anchor_tensor = self.transform(anchor)
+            yield anchor_tensor, self.transform(positive), _SAME_PAIR_TARGET
 
             negative = char2[drawer2]
-            yield anchor_tensor, to_tensor(negative), _DIFF_PAIR_TARGET
+            yield anchor_tensor, self.transform(negative), _DIFF_PAIR_TARGET
 
             for _ in range(times_to_augment):
-                anchor_tensor = to_augmented_tensor(anchor)
-                yield anchor_tensor, to_augmented_tensor(positive), _SAME_PAIR_TARGET
-                yield anchor_tensor, to_augmented_tensor(negative), _DIFF_PAIR_TARGET
+                anchor_tensor = self.augment_transform(anchor)
+                yield anchor_tensor, self.augment_transform(positive), _SAME_PAIR_TARGET
+                yield anchor_tensor, self.augment_transform(negative), _DIFF_PAIR_TARGET
 
     def __len__(self) -> int:
         return self.n_sample_pairs
@@ -141,24 +150,13 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
             md5=_ZIPS_MD5[self.zip_name_no_ext],
         )
 
+    def transform(self, image: Image.Image) -> Tensor:
+        return functional.to_tensor(image)
 
-data_augmentation_pipeline = solt.Stream(
-    [
-        slt.Rotate(p=0.5, angle_range=10.0),
-        slt.Shear(p=0.5, range_x=0.3, range_y=0.3),
-        slt.Scale(p=0.5, range_x=(0.8, 1.2), range_y=(0.8, 1.2)),
-        slt.Translate(p=0.5, range_x=2, range_y=2),
-    ]
-)
-
-
-def to_tensor(image: Image.Image) -> Tensor:
-    return functional.to_tensor(image)
-
-
-def to_augmented_tensor(image: Image.Image) -> Tensor:
-    return data_augmentation_pipeline(
-        solt.DataContainer(image, "I"),
-        as_dict=False,
-        normalize=False,
-    )
+    def augment_transform(self, image: Image.Image) -> Tensor:
+        return self.data_augmentation_pipeline(
+            solt.DataContainer(image, "I"),
+            return_torch=True,
+            as_dict=False,
+            normalize=False,
+        )
