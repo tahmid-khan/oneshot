@@ -15,8 +15,8 @@ _SUB_ROOT_DIR = "omniglot-py"
 _DOWNLOAD_URL_PREFIX: str = (
     "https://raw.githubusercontent.com/brendenlake/omniglot/master/python"
 )
-_IMAGES_EVALUATION: str = "images_evaluation.zip"
-_IMAGES_BACKGROUND: str = "images_background.zip"
+_IMAGES_EVALUATION: str = "images_evaluation"
+_IMAGES_BACKGROUND: str = "images_background"
 _ZIPS_MD5: dict[str, str] = {
     _IMAGES_BACKGROUND: "68d2efa1b9178cc56df9314c21c6e718",
     _IMAGES_EVALUATION: "6b91aef0f799c5bb55b94e3f2daec811",
