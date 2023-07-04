@@ -1,8 +1,12 @@
+from typing import TypeAlias
+
 import lightning as L
 import torch
 import torchmetrics
 from torch import Tensor, nn, optim
 from torch.nn import functional as F
+
+Batch: TypeAlias = tuple[Tensor, Tensor, Tensor]
 
 
 def init_weights(module: nn.Module) -> None:
@@ -17,18 +21,24 @@ def init_weights(module: nn.Module) -> None:
 
     All other weights and biases are left unchanged.
 
-    :param (nn.Module) module: The neural network whose weights and biases to initialize
+    :param module: The neural network whose weights and biases to initialize
+    :type module: nn.Module
     """
+    std: float
     if type(module) == nn.Conv2d:
-        nn.init.normal_(module.weight, mean=0, std=1e-2)
-        nn.init.normal_(module.bias, mean=0.5, std=1e-2)
+        std = 1e-2
     elif type(module) == nn.Linear:
-        nn.init.normal_(module.weight, mean=0, std=2e-1)
+        std = 2e-1
+    else:
+        return
+
+    nn.init.normal_(module.weight, mean=0, std=std)
+    if module.bias:
         nn.init.normal_(module.bias, mean=0.5, std=1e-2)
 
 
-# The inline comments beside forward-propagation calls show the shape of the output
-# tensor assuming the main Siamese network's input tensors each has the same shape as in
+# The inline comments beside forward-propagation steps show the shape of the output
+# tensors assuming the Siamese network's input tensors have the same shape as in
 # the paper: (N, 1, 105, 105) where N is the batch size.
 
 
@@ -74,9 +84,6 @@ class DefaultSimilarityPredictor(nn.Module):
     def forward(self, x1: Tensor, x2: Tensor) -> Tensor:
         l1_dists = torch.abs(x1 - x2)  # (N, 4096)
         similarities = self.fc(l1_dists)  # (N, 1)
-
-        # Return the raw similarity scores (without sigmoid) and use `bce_with_logits`
-        # for increased numerical stability.
         return similarities
 
 
@@ -104,38 +111,41 @@ class SiameseNetworkForSimilarity(nn.Module):
         return predictions
 
 
-class OneShotSimilarityPredictor(L.LightningModule):
+class VerificationTaskModel(L.LightningModule):
     def __init__(self) -> None:
         super().__init__()
-        self.network = SiameseNetworkForSimilarity()
-        self.criterion = nn.BCEWithLogitsLoss()
-        self.train_accuracy = torchmetrics.classification.BinaryAccuracy()
-        self.valid_accuracy = torchmetrics.classification.BinaryAccuracy()
+        self.network = SiameseNetworkForSimilarity(final_sigmoid=False)
+        self.loss_func = nn.BCEWithLogitsLoss()
+        self.train_acc = torchmetrics.Accuracy(task="binary")
+        self.valid_acc = torchmetrics.Accuracy(task="binary")
 
-    def training_step(
-        self,
-        batch: tuple[Tensor, Tensor, Tensor],
-        batch_idx: int,
-    ) -> dict[str, any]:
+    def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
         x1, x2, y = batch
         y_hat = self.network(x1, x2)
-        loss = self.criterion(y_hat, y)
-        metrics = {"loss": loss, "train_acc": self.train_accuracy}
-        self.log_dict(metrics, on_step=True, on_epoch=True)
-        return metrics
+        loss = self.loss_func(y_hat, y)
+        self.train_acc(y_hat, y)
+        logs = {"train_loss": loss, "train_acc": self.train_acc}
+        self.log_dict(
+            logs,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        return loss
 
-    def validation_step(
-        self,
-        batch: tuple[Tensor, Tensor, Tensor],
-        batch_idx: int,
-    ) -> dict[str, any]:
+    def validation_step(self, batch: Batch, batch_idx: int) -> None:
         x1, x2, y = batch
         y_hat = self.network(x1, x2)
-        loss = self.criterion(y_hat, y)
-        self.valid_accuracy(y_hat, y)
-        metrics = {"valid_loss": loss, "valid_acc": self.valid_accuracy}
-        self.log_dict(metrics, on_step=True, on_epoch=True)
-        return metrics
+        self.valid_acc(y_hat, y)
+        logs = {"valid_acc": self.valid_acc}
+        self.log_dict(
+            logs,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
 
     def configure_optimizers(self) -> optim.Optimizer:
         # starting simple with SGD
