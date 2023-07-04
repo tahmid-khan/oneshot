@@ -1,6 +1,7 @@
 import random
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from os import path
+from typing import TypeAlias
 
 import solt
 import torch
@@ -8,8 +9,8 @@ import torch.utils.data
 from PIL import Image
 from solt import transforms as slt
 from torch import Tensor
+from torchvision import transforms
 from torchvision.datasets import utils
-from torchvision.transforms import functional
 
 _SUB_ROOT_DIR = "omniglot-py"
 _DOWNLOAD_URL_PREFIX: str = (
@@ -22,8 +23,12 @@ _ZIPS_MD5: dict[str, str] = {
     _IMAGES_EVALUATION: "6b91aef0f799c5bb55b94e3f2daec811",
 }
 _NUM_CHARS_PER_ALPH: int = 15  # number of characters to take per alphabet
-_SAME_PAIR_TARGET = torch.tensor(1.0)
-_DIFF_PAIR_TARGET = torch.tensor(0.0)
+_SAME_PAIR_TARGET: Tensor = torch.tensor(1.0)
+_DIFF_PAIR_TARGET: Tensor = torch.tensor(0.0)
+
+
+Transformation: TypeAlias = Callable[[Image.Image], Tensor]
+TrainingSample: TypeAlias = tuple[Tensor, Tensor, Tensor]
 
 
 class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
@@ -34,6 +39,8 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
     augment: bool
     zip_name_no_ext: str
     drawers_slice: slice
+    transform: Transformation
+    augment_transform: Transformation
 
     def __init__(
         self,
@@ -56,15 +63,39 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
         self.augment = augment
         self.zip_name_no_ext = _IMAGES_BACKGROUND if train else _IMAGES_EVALUATION
         self.drawers_slice = slice(12) if train else slice(16)
-        self._download_and_verify(download=download)
-        augmentations = [
-            slt.Rotate(p=0.5, angle_range=10.0),  # 𝜃 ∈ [−10.0, 10.0]
-            slt.Shear(p=0.5, range_x=0.3, range_y=0.3),  # 𝜌 ∈ [−0.3, 0.3]
-            slt.Scale(p=0.5, range_x=(0.8, 1.2), range_y=(0.8, 1.2)),  # 𝑠 ∈ [0.8, 1.2]
-            slt.Translate(p=0.5, range_x=2, range_y=2),  # 𝑡 ∈ [−2, 2]
-        ]
-        self.augmentation_pipeline = solt.Stream(augmentations)
+
+        self._verify_data_exists(download_first=download)
         self._prepare_data()
+        self._prepare_transformations()
+
+    def _verify_data_exists(self, download_first: bool):
+        if download_first:
+            self._download()
+        if not self._check_integrity():
+            raise RuntimeError(
+                "Dataset not found or corrupted. You can use download=True to "
+                + "download it."
+            )
+
+    def _check_integrity(self) -> bool:
+        return utils.check_integrity(
+            fpath=path.join(self.root, self.zip_name_no_ext + ".zip"),
+            md5=_ZIPS_MD5[self.zip_name_no_ext],
+        )
+
+    def _download(self) -> None:
+        if self._check_integrity():
+            print(f"File already downloaded and verified: {self.zip_name_no_ext}.zip")
+            return
+
+        zip_filename = self.zip_name_no_ext + ".zip"
+        url = _DOWNLOAD_URL_PREFIX + "/" + zip_filename
+        utils.download_and_extract_archive(
+            url,
+            download_root=self.root,
+            filename=zip_filename,
+            md5=_ZIPS_MD5[self.zip_name_no_ext],
+        )
 
     def _prepare_data(self) -> None:
         self.data = []
@@ -92,19 +123,27 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
 
             self.data.append(alphabet_data)
 
-    def _download_and_verify(self, download):
-        if download:
-            self._download()
-        if not self._check_integrity():
-            raise RuntimeError(
-                "Dataset not found or corrupted. You can use download=True to "
-                + "download it."
-            )
+    def _prepare_transformations(self) -> None:
+        self.transform = transforms.ToTensor()
+
+        augmentations = [
+            slt.Rotate(p=0.5, angle_range=10.0),  # 𝜃 ∈ [−10.0, 10.0]
+            slt.Shear(p=0.5, range_x=0.3, range_y=0.3),  # 𝜌 ∈ [−0.3, 0.3]
+            slt.Scale(p=0.5, range_x=(0.8, 1.2), range_y=(0.8, 1.2)),  # 𝑠 ∈ [0.8, 1.2]
+            slt.Translate(p=0.5, range_x=2, range_y=2),  # 𝑡 ∈ [−2, 2]
+        ]
+        augmentation_pipeline = solt.Stream(augmentations, optimize_stack=True)
+        self.augment_transform = lambda image: augmentation_pipeline(
+            solt.DataContainer(image, "I"),
+            return_torch=True,
+            as_dict=False,
+            normalize=False,
+        )
 
     def __len__(self) -> int:
-        return self.n_sample_pairs
+        return self.n_sample_pairs * (9 if self.augment else 1)
 
-    def __iter__(self) -> Iterator[tuple[Tensor, Tensor, Tensor]]:
+    def __iter__(self) -> Iterator[TrainingSample]:
         drawers_range = range(20)[self.drawers_slice]
         times_to_augment = 8 if self.augment else 0
 
@@ -125,34 +164,3 @@ class OmniglotForVerificationTask(torch.utils.data.IterableDataset):
                 anchor_tensor = self.augment_transform(anchor)
                 yield anchor_tensor, self.augment_transform(positive), _SAME_PAIR_TARGET
                 yield anchor_tensor, self.augment_transform(negative), _DIFF_PAIR_TARGET
-
-    def _download(self) -> None:
-        if self._check_integrity():
-            print(f"File already downloaded and verified: {self.zip_name_no_ext}.zip")
-            return
-
-        zip_filename = self.zip_name_no_ext + ".zip"
-        url = _DOWNLOAD_URL_PREFIX + "/" + zip_filename
-        utils.download_and_extract_archive(
-            url,
-            download_root=self.root,
-            filename=zip_filename,
-            md5=_ZIPS_MD5[self.zip_name_no_ext],
-        )
-
-    def _check_integrity(self) -> bool:
-        return utils.check_integrity(
-            fpath=path.join(self.root, self.zip_name_no_ext + ".zip"),
-            md5=_ZIPS_MD5[self.zip_name_no_ext],
-        )
-
-    def transform(self, image: Image.Image) -> Tensor:
-        return functional.to_tensor(image)
-
-    def augment_transform(self, image: Image.Image) -> Tensor:
-        return self.augmentation_pipeline(
-            solt.DataContainer(image, "I"),
-            return_torch=True,
-            as_dict=False,
-            normalize=False,
-        )
